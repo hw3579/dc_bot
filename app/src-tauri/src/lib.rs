@@ -2,8 +2,8 @@ mod relay;
 
 use relay::{
     persist_runtime_snapshot, relay_to_ib, validate_signal, AppState, IbGatewayConfig,
-    OptionSignalInput, RelayMessage, RelayReceipt, RelayStats, RelayStatus, RuntimeSnapshot,
-    SNAPSHOT_EVENT,
+    NatsFeedConfig, OptionSignalInput, RelayMessage, RelayReceipt, RelayStats, RelayStatus,
+    RuntimeSnapshot, SNAPSHOT_EVENT,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -25,6 +25,25 @@ fn save_ib_gateway_config(
             .config
             .lock()
             .map_err(|_| String::from("无法更新 IB 配置"))?;
+        *stored_config = config;
+    }
+
+    emit_snapshot(&app)
+}
+
+#[tauri::command]
+fn save_nats_feed_config(
+    app: AppHandle,
+    state: State<AppState>,
+    config: NatsFeedConfig,
+) -> Result<RuntimeSnapshot, String> {
+    config.validate()?;
+
+    {
+        let mut stored_config = state
+            .nats_config
+            .lock()
+            .map_err(|_| String::from("无法更新 NATS Feed 配置"))?;
         *stored_config = config;
     }
 
@@ -123,6 +142,12 @@ fn build_snapshot(state: &AppState) -> Result<RuntimeSnapshot, String> {
         .map_err(|_| String::from("无法读取应用状态"))?
         .clone();
 
+    let nats_config = state
+        .nats_config
+        .lock()
+        .map_err(|_| String::from("无法读取 NATS Feed 配置"))?
+        .clone();
+
     let messages = state
         .messages
         .lock()
@@ -143,6 +168,7 @@ fn build_snapshot(state: &AppState) -> Result<RuntimeSnapshot, String> {
 
     Ok(RuntimeSnapshot {
         broker_config,
+        nats_config,
         messages,
         stats,
     })
@@ -194,6 +220,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             bootstrap_state,
             save_ib_gateway_config,
+            save_nats_feed_config,
             submit_option_signal
         ])
         .run(tauri::generate_context!())

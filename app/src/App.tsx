@@ -16,17 +16,11 @@ type OrderSide = "buy" | "sell";
 type RelayStatus = "queued" | "forwarding" | "sent" | "failed";
 type NoticeTone = "success" | "error";
 
-type SignalFormState = {
-  source: string;
-  strategyTag: string;
-  symbol: string;
-  optionType: OptionType;
-  expiry: string;
-  strike: string;
-  side: OrderSide;
-  quantity: string;
-  limitPrice: string;
-  rawMessage: string;
+type NatsFormState = {
+  serverAddress: string;
+  subject: string;
+  queueGroup: string;
+  autoSubscribe: boolean;
 };
 
 type ConfigFormState = {
@@ -51,6 +45,13 @@ type OptionSignalInput = {
   quantity: number;
   limitPrice: number | null;
   rawMessage: string;
+};
+
+type NatsFeedConfig = {
+  serverAddress: string;
+  subject: string;
+  queueGroup: string;
+  autoSubscribe: boolean;
 };
 
 type IbGatewayConfig = {
@@ -90,6 +91,7 @@ type RelayStats = {
 
 type RuntimeSnapshot = {
   brokerConfig: IbGatewayConfig;
+  natsConfig: NatsFeedConfig;
   messages: RelayMessage[];
   stats: RelayStats;
 };
@@ -110,8 +112,40 @@ const defaultBrokerConfig: IbGatewayConfig = {
   autoForward: true,
 };
 
+const defaultNatsConfig: NatsFeedConfig = {
+  serverAddress: "127.0.0.1:4222",
+  subject: "signals.options.entry",
+  queueGroup: "",
+  autoSubscribe: false,
+};
+
+const ibPortOptions = [
+  { value: "4001", label: "4001 / IB Gateway Live" },
+  { value: "4002", label: "4002 / IB Gateway Paper" },
+  { value: "7496", label: "7496 / TWS Live" },
+  { value: "7497", label: "7497 / TWS Paper" },
+];
+
+const ibExchangeOptions = ["SMART", "CBOE", "ISE", "BOX", "GEMINI"];
+const ibCurrencyOptions = ["USD", "EUR", "HKD", "CAD"];
+
+const natsPayloadExample = `{
+  "author_username": "Enrich Trades",
+  "timestamp": "2026-05-22T13:51:59.619Z",
+  "category": "entry",
+  "parsed_entry": {
+    "symbol": "ARM",
+    "strike": "305",
+    "contract_type": "calls",
+    "expiry_label": "0dte",
+    "price": "2.70"
+  },
+  "content": "$ARM - $305 0DTE lotto size $2.70"
+}`;
+
 const emptySnapshot: RuntimeSnapshot = {
   brokerConfig: defaultBrokerConfig,
+  natsConfig: defaultNatsConfig,
   messages: [],
   stats: {
     total: 0,
@@ -122,31 +156,24 @@ const emptySnapshot: RuntimeSnapshot = {
   },
 };
 
-const defaultSignalForm: SignalFormState = {
-  source: "Discord options desk",
-  strategyTag: "opening-sweep",
-  symbol: "AAPL",
-  optionType: "call",
-  expiry: "2026-06-19",
-  strike: "200",
-  side: "buy",
-  quantity: "1",
-  limitPrice: "1.25",
-  rawMessage: "AAPL 2026-06-19 200C BUY 1 @ 1.25",
-};
-
 function App() {
   const [snapshot, setSnapshot] = useState<RuntimeSnapshot>(emptySnapshot);
-  const [signalForm, setSignalForm] = useState<SignalFormState>(defaultSignalForm);
+  const [natsForm, setNatsForm] = useState<NatsFormState>(natsToForm(defaultNatsConfig));
+  const [natsDirty, setNatsDirty] = useState(false);
   const [configForm, setConfigForm] = useState<ConfigFormState>(configToForm(defaultBrokerConfig));
   const [configDirty, setConfigDirty] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  const [savingNatsConfig, setSavingNatsConfig] = useState(false);
   const [savingConfig, setSavingConfig] = useState(false);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const natsDirtyRef = useRef(false);
   const configDirtyRef = useRef(false);
 
   const deferredMessages = useDeferredValue(snapshot.messages);
   const activeBacklog = snapshot.stats.queued + snapshot.stats.forwarding;
+
+  useEffect(() => {
+    natsDirtyRef.current = natsDirty;
+  }, [natsDirty]);
 
   useEffect(() => {
     configDirtyRef.current = configDirty;
@@ -160,6 +187,10 @@ function App() {
         startTransition(() => {
           setSnapshot(payload);
 
+          if (!natsDirtyRef.current) {
+            setNatsForm(natsToForm(payload.natsConfig));
+          }
+
           if (!configDirtyRef.current) {
             setConfigForm(configToForm(payload.brokerConfig));
           }
@@ -172,6 +203,10 @@ function App() {
     void listen<RuntimeSnapshot>("relay:snapshot", (event) => {
       startTransition(() => {
         setSnapshot(event.payload);
+
+        if (!natsDirtyRef.current) {
+          setNatsForm(natsToForm(event.payload.natsConfig));
+        }
 
         if (!configDirtyRef.current) {
           setConfigForm(configToForm(event.payload.brokerConfig));
@@ -190,30 +225,34 @@ function App() {
     };
   }, []);
 
-  async function handleSignalSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleNatsConfigSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setSubmitting(true);
+    setSavingNatsConfig(true);
     setNotice(null);
 
     try {
-      const payload = signalToPayload(signalForm);
-      await invoke<RelayMessage>("submit_option_signal", { signal: payload });
-
-      setNotice({
-        tone: "success",
-        text: snapshot.brokerConfig.autoForward
-          ? "信号已入队，后台 relay 会继续推送状态。"
-          : "信号已保存，但当前 Auto Relay 处于关闭状态。",
+      const payload = natsToPayload(natsForm);
+      const nextSnapshot = await invoke<RuntimeSnapshot>("save_nats_feed_config", {
+        config: payload,
       });
 
-      setSignalForm((current) => ({
-        ...current,
-        rawMessage: "",
-      }));
+      startTransition(() => {
+        setSnapshot(nextSnapshot);
+        setNatsForm(natsToForm(nextSnapshot.natsConfig));
+      });
+
+      natsDirtyRef.current = false;
+      setNatsDirty(false);
+      setNotice({
+        tone: "success",
+        text: payload.autoSubscribe
+          ? "NATS Feed 配置已保存，Rust 侧会按自动订阅策略准备接入。"
+          : "NATS Feed 配置已保存，当前仍处于手动订阅策略。",
+      });
     } catch (error) {
       setNotice({ tone: "error", text: formatError(error) });
     } finally {
-      setSubmitting(false);
+      setSavingNatsConfig(false);
     }
   }
 
@@ -248,11 +287,10 @@ function App() {
     }
   }
 
-  function updateSignalField<K extends keyof SignalFormState>(
-    field: K,
-    value: SignalFormState[K],
-  ) {
-    setSignalForm((current) => ({
+  function updateNatsField<K extends keyof NatsFormState>(field: K, value: NatsFormState[K]) {
+    natsDirtyRef.current = true;
+    setNatsDirty(true);
+    setNatsForm((current) => ({
       ...current,
       [field]: value,
     }));
@@ -281,10 +319,11 @@ function App() {
           <p className="eyebrow">Phase 1 / IBKR Relay Console</p>
           <h1>接收期权信号，先展示，再尽快转发。</h1>
           <p className="hero-text">
-            当前骨架已经具备本地队列、异步转发、状态回推和 IB Gateway 配置面板。
-            默认以 dry-run 模式启动，避免误下实盘单。
+            页面现在聚焦 Rust 原生 NATS feed 订阅入口和 IBKR 路由配置。
+            收到的 entry 信号仍然会先进入本地状态，再交给 relay 继续转发。
           </p>
           <div className="hero-tags">
+            <span className="hero-tag">NATS Native</span>
             <span className="hero-tag">Tauri 2</span>
             <span className="hero-tag">Vite + React</span>
             <span className="hero-tag">pnpm</span>
@@ -295,16 +334,16 @@ function App() {
         <div className="hero-route">
           <div className="route-badge-grid">
             <div className="route-badge">
+              <span>Feed</span>
+              <strong>{compactValue(snapshot.natsConfig.serverAddress, "未配置")}</strong>
+            </div>
+            <div className="route-badge">
+              <span>Subject</span>
+              <strong>{compactValue(snapshot.natsConfig.subject, "未配置")}</strong>
+            </div>
+            <div className="route-badge">
               <span>Mode</span>
               <strong>{snapshot.brokerConfig.dryRun ? "Dry Run" : "Live"}</strong>
-            </div>
-            <div className="route-badge">
-              <span>Relay</span>
-              <strong>{snapshot.brokerConfig.autoForward ? "Auto" : "Manual"}</strong>
-            </div>
-            <div className="route-badge">
-              <span>Queue</span>
-              <strong>{activeBacklog}</strong>
             </div>
             <div className="route-badge">
               <span>Target</span>
@@ -313,9 +352,9 @@ function App() {
           </div>
 
           <ol className="route-list">
-            <li>Discord / 其他源推送原始下单消息</li>
-            <li>前端立即展示标准化后的期权信号</li>
-            <li>Rust 后台将信号压入 relay 队列</li>
+            <li>Rust 直接订阅指定 NATS server 和 subject</li>
+            <li>页面保存 feed 配置并等待接入消息流</li>
+            <li>Rust relay 将标准化信号压入本地队列</li>
             <li>IBKR 适配层异步下发并把结果回写 UI</li>
           </ol>
         </div>
@@ -347,114 +386,74 @@ function App() {
       {notice ? <section className={`notice notice-${notice.tone}`}>{notice.text}</section> : null}
 
       <section className="workspace-grid">
-        <form className="panel composer-panel" onSubmit={handleSignalSubmit}>
+        <form className="panel composer-panel" onSubmit={handleNatsConfigSave}>
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Signal Intake</p>
-              <h2>期权信号录入</h2>
+              <p className="eyebrow">Feed Intake</p>
+              <h2>NATS 原生订阅入口</h2>
             </div>
-            <span className="section-chip">本地入队后即刻可见</span>
+            <span className="section-chip">保存后会持久化到本地 JSON</span>
           </div>
 
           <div className="form-grid two-columns">
-            <label>
-              <span>Source</span>
-              <input
-                value={signalForm.source}
-                onChange={(event) => updateSignalField("source", event.currentTarget.value)}
-                placeholder="Discord options desk"
-              />
-            </label>
-            <label>
-              <span>Strategy Tag</span>
-              <input
-                value={signalForm.strategyTag}
-                onChange={(event) => updateSignalField("strategyTag", event.currentTarget.value)}
-                placeholder="opening-sweep"
-              />
-            </label>
-            <label>
-              <span>Symbol</span>
-              <input
-                value={signalForm.symbol}
-                onChange={(event) => updateSignalField("symbol", event.currentTarget.value.toUpperCase())}
-                placeholder="AAPL"
-              />
-            </label>
-            <label>
-              <span>Expiry</span>
-              <input
-                value={signalForm.expiry}
-                onChange={(event) => updateSignalField("expiry", event.currentTarget.value)}
-                placeholder="2026-06-19"
-              />
-            </label>
-            <label>
-              <span>Option Type</span>
-              <select
-                value={signalForm.optionType}
-                onChange={(event) => updateSignalField("optionType", event.currentTarget.value as OptionType)}
-              >
-                <option value="call">Call</option>
-                <option value="put">Put</option>
-              </select>
-            </label>
-            <label>
-              <span>Side</span>
-              <select
-                value={signalForm.side}
-                onChange={(event) => updateSignalField("side", event.currentTarget.value as OrderSide)}
-              >
-                <option value="buy">Buy</option>
-                <option value="sell">Sell</option>
-              </select>
-            </label>
-            <label>
-              <span>Strike</span>
-              <input
-                value={signalForm.strike}
-                onChange={(event) => updateSignalField("strike", event.currentTarget.value)}
-                placeholder="200"
-              />
-            </label>
-            <label>
-              <span>Quantity</span>
-              <input
-                value={signalForm.quantity}
-                onChange={(event) => updateSignalField("quantity", event.currentTarget.value)}
-                placeholder="1"
-              />
-            </label>
             <label className="span-2">
-              <span>Limit Price</span>
+              <span>NATS Server / IP:Port</span>
               <input
-                value={signalForm.limitPrice}
-                onChange={(event) => updateSignalField("limitPrice", event.currentTarget.value)}
-                placeholder="留空则使用市价单"
+                value={natsForm.serverAddress}
+                onChange={(event) => updateNatsField("serverAddress", event.currentTarget.value)}
+                placeholder="127.0.0.1:4222 或 nats://127.0.0.1:4222"
               />
             </label>
-            <label className="span-2">
-              <span>Raw Message</span>
-              <textarea
-                rows={5}
-                value={signalForm.rawMessage}
-                onChange={(event) => updateSignalField("rawMessage", event.currentTarget.value)}
-                placeholder="从 Discord、Telegram 或 webhook 拿到的原始下单消息"
+            <label>
+              <span>Subject</span>
+              <input
+                value={natsForm.subject}
+                onChange={(event) => updateNatsField("subject", event.currentTarget.value)}
+                placeholder="signals.options.entry"
               />
+            </label>
+            <label>
+              <span>Queue Group</span>
+              <input
+                value={natsForm.queueGroup}
+                onChange={(event) => updateNatsField("queueGroup", event.currentTarget.value)}
+                placeholder="可选，用于多实例消费"
+              />
+            </label>
+            <div className="info-card span-2">
+              <strong>推荐入站消息格式</strong>
+              <p>
+                当前页面已经从手动录单切到 feed 配置入口，推荐直接沿用 Discord 解析后的 entry JSON 结构。
+              </p>
+              <pre className="raw-message compact">{natsPayloadExample}</pre>
+            </div>
+          </div>
+
+          <div className="toggle-grid">
+            <label className="toggle-card">
+              <input
+                type="checkbox"
+                checked={natsForm.autoSubscribe}
+                onChange={(event) => updateNatsField("autoSubscribe", event.currentTarget.checked)}
+              />
+              <div>
+                <strong>Auto Subscribe</strong>
+                <p>启动后优先按当前 NATS server 和 subject 准备订阅 feed。</p>
+              </div>
             </label>
           </div>
 
           <div className="panel-footer">
             <div className="footer-copy">
-              <strong>{snapshot.brokerConfig.autoForward ? "Auto Relay 已启用" : "当前仅本地入队"}</strong>
+              <strong>
+                {natsDirty ? "有未保存的 Feed 修改" : "Feed 配置已同步到本地状态 JSON"}
+              </strong>
               <p>
-                {snapshot.brokerConfig.dryRun
-                  ? "Dry-run 打开时只验证合约和订单构造，不会真的发给 IBKR。"
-                  : "Dry-run 关闭后，会尝试连接 IB Gateway / TWS 并立刻 place order。"}
+                保存的是 NATS 接入口配置；消息实际到来后，仍然会先写入本地状态，再交给 IB relay。
               </p>
             </div>
-            <button type="submit" disabled={submitting}>
-              {submitting ? "Submitting..." : "Queue Signal"}
+            <button type="submit" disabled={savingNatsConfig}>
+              {savingNatsConfig ? "Saving..." : "Save Feed Config"}
             </button>
           </div>
         </form>
@@ -480,11 +479,16 @@ function App() {
               </label>
               <label>
                 <span>Port</span>
-                <input
+                <select
                   value={configForm.port}
                   onChange={(event) => updateConfigField("port", event.currentTarget.value)}
-                  placeholder="4002"
-                />
+                >
+                  {ibPortOptions.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 <span>Client ID</span>
@@ -504,19 +508,29 @@ function App() {
               </label>
               <label>
                 <span>Exchange</span>
-                <input
+                <select
                   value={configForm.defaultExchange}
                   onChange={(event) => updateConfigField("defaultExchange", event.currentTarget.value.toUpperCase())}
-                  placeholder="SMART"
-                />
+                >
+                  {ibExchangeOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
               <label>
                 <span>Currency</span>
-                <input
+                <select
                   value={configForm.currency}
                   onChange={(event) => updateConfigField("currency", event.currentTarget.value.toUpperCase())}
-                  placeholder="USD"
-                />
+                >
+                  {ibCurrencyOptions.map((option) => (
+                    <option key={option} value={option}>
+                      {option}
+                    </option>
+                  ))}
+                </select>
               </label>
             </div>
 
@@ -552,34 +566,6 @@ function App() {
               </button>
             </div>
           </form>
-
-          <section className="panel pipeline-panel">
-            <div className="section-heading">
-              <div>
-                <p className="eyebrow">Runtime Shape</p>
-                <h2>当前骨架边界</h2>
-              </div>
-            </div>
-
-            <ul className="pipeline-list">
-              <li>
-                <strong>前端展示先行</strong>
-                <span>所有信号先进入本地状态，让操作台立即看到。</span>
-              </li>
-              <li>
-                <strong>Rust relay 独立</strong>
-                <span>IB 逻辑已被隔离，后面替换成别的 broker 也容易扩展。</span>
-              </li>
-              <li>
-                <strong>默认安全模式</strong>
-                <span>Dry-run 默认开启，防止骨架阶段误发实盘订单。</span>
-              </li>
-              <li>
-                <strong>后续入口清晰</strong>
-                <span>下一步可以把 Discord 解析结果直接喂给 submit_option_signal。</span>
-              </li>
-            </ul>
-          </section>
         </div>
       </section>
 
@@ -594,8 +580,8 @@ function App() {
 
         {deferredMessages.length === 0 ? (
           <div className="empty-state">
-            <strong>还没有信号进入控制台。</strong>
-            <p>先在上面的表单里提交一条期权指令，或者把 Discord 解析器接到这个入口。</p>
+            <strong>还没有消息通过 NATS feed 进入控制台。</strong>
+            <p>先保存上面的 NATS server 和 subject，后续把 entry 消息推到对应 subject 即可。</p>
           </div>
         ) : (
           <div className="ticket-list">
@@ -649,6 +635,24 @@ function App() {
   );
 }
 
+function natsToForm(config: NatsFeedConfig): NatsFormState {
+  return {
+    serverAddress: config.serverAddress,
+    subject: config.subject,
+    queueGroup: config.queueGroup,
+    autoSubscribe: config.autoSubscribe,
+  };
+}
+
+function natsToPayload(form: NatsFormState): NatsFeedConfig {
+  return {
+    serverAddress: form.serverAddress.trim(),
+    subject: form.subject.trim(),
+    queueGroup: form.queueGroup.trim(),
+    autoSubscribe: form.autoSubscribe,
+  };
+}
+
 function configToForm(config: IbGatewayConfig): ConfigFormState {
   return {
     host: config.host,
@@ -673,31 +677,6 @@ function configToPayload(form: ConfigFormState): IbGatewayConfig {
     dryRun: form.dryRun,
     autoForward: form.autoForward,
   };
-}
-
-function signalToPayload(form: SignalFormState): OptionSignalInput {
-  return {
-    source: form.source.trim(),
-    strategyTag: form.strategyTag.trim(),
-    symbol: form.symbol.trim().toUpperCase(),
-    optionType: form.optionType,
-    expiry: form.expiry.trim(),
-    strike: parseDecimal(form.strike, "Strike"),
-    side: form.side,
-    quantity: parseDecimal(form.quantity, "Quantity"),
-    limitPrice: form.limitPrice.trim() ? parseDecimal(form.limitPrice, "Limit Price") : null,
-    rawMessage: form.rawMessage.trim(),
-  };
-}
-
-function parseDecimal(value: string, label: string): number {
-  const parsed = Number(value);
-
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    throw new Error(`${label} 必须是大于 0 的数字`);
-  }
-
-  return parsed;
 }
 
 function parseInteger(value: string, label: string): number {
@@ -736,6 +715,16 @@ function formatTimestamp(value: string): string {
     minute: "2-digit",
     second: "2-digit",
   }).format(parsed);
+}
+
+function compactValue(value: string, fallback: string): string {
+  const trimmed = value.trim();
+
+  if (!trimmed) {
+    return fallback;
+  }
+
+  return trimmed.length > 28 ? `${trimmed.slice(0, 25)}...` : trimmed;
 }
 
 function statusLabel(status: RelayStatus): string {

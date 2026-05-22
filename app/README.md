@@ -5,7 +5,7 @@
 当前阶段已经完成：
 
 - Tauri + Vite + pnpm 桌面应用目录初始化
-- 前端控制台界面，包含信号录入、IB Gateway 配置、实时状态看板
+- 前端控制台界面，包含原生 NATS feed 配置、IB Gateway 配置、实时状态看板
 - Rust 侧 relay 状态机，支持排队、转发中、成功、失败四种状态
 - IBKR 适配层骨架，默认以 dry-run 模式运行，关闭 dry-run 后会尝试通过 ibapi 下单
 
@@ -49,6 +49,10 @@ pnpm tauri build --no-bundle
 - IB_GATEWAY_CURRENCY
 - IB_GATEWAY_DRY_RUN
 - IB_GATEWAY_AUTO_FORWARD
+- NATS_SERVER_ADDRESS
+- NATS_SUBJECT
+- NATS_QUEUE_GROUP
+- NATS_AUTO_SUBSCRIBE
 
 如果没有读到这些变量，就会回退到代码内置默认值。
 
@@ -71,13 +75,13 @@ cargo check --manifest-path src-tauri/Cargo.toml
 
 ## 当前工作流
 
-1. 前端录入或接收期权信号
-2. Rust 侧生成本地消息并立即刷新 UI
+1. 页面保存 NATS server 和 subject 配置
+2. 外部 feed 推送 entry 类期权消息
 3. 若开启 Auto Relay，则后台异步转发到 IBKR
 4. 结果通过事件回推到前端消息流
 
 ## 后续建议
 
-1. 把 Discord 导出的消息解析器接到前端表单或 Rust 命令入口
+1. 把 NATS 消息直接映射到 submit_option_signal 调用链
 2. 把策略消息映射为真实的 Contract/Order 规则
 3. 接入 order update stream，把成交、撤单、拒单继续回写到界面

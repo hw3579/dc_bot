@@ -48,6 +48,51 @@ pub struct OptionSignalInput {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct NatsFeedConfig {
+    #[serde(alias = "wsEndpoint", alias = "ws_endpoint")]
+    pub server_address: String,
+    pub subject: String,
+    pub queue_group: String,
+    #[serde(alias = "autoConnect", alias = "auto_connect")]
+    pub auto_subscribe: bool,
+}
+
+impl Default for NatsFeedConfig {
+    fn default() -> Self {
+        load_dotenv();
+
+        Self {
+            server_address: env_string("NATS_SERVER_ADDRESS")
+                .or_else(|| env_string("NATS_WS_ENDPOINT"))
+                .unwrap_or_else(|| String::from("127.0.0.1:4222")),
+            subject: env_string("NATS_SUBJECT")
+                .unwrap_or_else(|| String::from("signals.options.entry")),
+            queue_group: env_string("NATS_QUEUE_GROUP").unwrap_or_default(),
+            auto_subscribe: env_bool("NATS_AUTO_SUBSCRIBE")
+                .or_else(|| env_bool("NATS_AUTO_CONNECT"))
+                .unwrap_or(false),
+        }
+    }
+}
+
+impl NatsFeedConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        let server_address = self.server_address.trim();
+
+        if server_address.is_empty() {
+            return Err(String::from("NATS Server 地址不能为空"));
+        }
+
+        if self.subject.trim().is_empty() {
+            return Err(String::from("NATS Subject 不能为空"));
+        }
+
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IbGatewayConfig {
     pub host: String,
     pub port: u16,
@@ -141,6 +186,7 @@ pub struct RelayStats {
 #[serde(rename_all = "camelCase")]
 pub struct RuntimeSnapshot {
     pub broker_config: IbGatewayConfig,
+    pub nats_config: NatsFeedConfig,
     pub messages: Vec<RelayMessage>,
     pub stats: RelayStats,
 }
@@ -148,7 +194,11 @@ pub struct RuntimeSnapshot {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct PersistedState {
+    #[serde(default)]
     broker_config: IbGatewayConfig,
+    #[serde(default)]
+    nats_config: NatsFeedConfig,
+    #[serde(default)]
     messages: Vec<RelayMessage>,
 }
 
@@ -156,6 +206,7 @@ impl Default for PersistedState {
     fn default() -> Self {
         Self {
             broker_config: IbGatewayConfig::default(),
+            nats_config: NatsFeedConfig::default(),
             messages: Vec::new(),
         }
     }
@@ -163,6 +214,7 @@ impl Default for PersistedState {
 
 pub struct AppState {
     pub config: Mutex<IbGatewayConfig>,
+    pub nats_config: Mutex<NatsFeedConfig>,
     pub messages: Mutex<Vec<RelayMessage>>,
     next_id: AtomicU64,
 }
@@ -171,6 +223,7 @@ impl Default for AppState {
     fn default() -> Self {
         Self {
             config: Mutex::new(IbGatewayConfig::default()),
+            nats_config: Mutex::new(NatsFeedConfig::default()),
             messages: Mutex::new(Vec::new()),
             next_id: AtomicU64::new(1),
         }
@@ -198,6 +251,7 @@ impl AppState {
 
         Self {
             config: Mutex::new(persisted.broker_config),
+            nats_config: Mutex::new(persisted.nats_config),
             messages: Mutex::new(persisted.messages),
             next_id: AtomicU64::new(next_id),
         }
@@ -440,6 +494,7 @@ fn env_bool(key: &str) -> Option<bool> {
 pub fn persist_runtime_snapshot(snapshot: &RuntimeSnapshot) -> Result<(), String> {
     let state = PersistedState {
         broker_config: snapshot.broker_config.clone(),
+        nats_config: snapshot.nats_config.clone(),
         messages: snapshot.messages.clone(),
     };
 

@@ -204,6 +204,7 @@ body {
 
 .route-badge strong {
   font-size: 0.92rem;
+  word-break: break-word;
 }
 
 .route-list,
@@ -310,6 +311,24 @@ body {
 .pipeline-panel,
 .tape-panel {
   padding: 28px;
+}
+
+.info-card {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 40, 63, 0.08);
+  background: rgba(255, 252, 246, 0.82);
+}
+
+.info-card strong {
+  display: block;
+  font-size: 0.94rem;
+}
+
+.info-card p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+  color: var(--muted);
 }
 
 .section-heading {
@@ -534,6 +553,11 @@ button:disabled {
   font-size: 0.82rem;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.raw-message.compact {
+  margin-top: 12px;
+  min-height: 0;
 }
 
 .empty-state {

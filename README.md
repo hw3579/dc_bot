@@ -62,6 +62,43 @@ uv run discord-filter-orders data/discord_channel_1496916217523470468_last3d.jso
 uv run discord-filter-orders data/discord_channel_1496916217523470468_last3d.jsonl --categories entry,exit
 ```
 
+## 通过 NATS Topic 分发
+
+筛选完成后，可以把结果通过 NATS subject 发出去。当前项目默认读取：
+
+- `NATS_SERVER_ADDRESS`，默认 `127.0.0.1:4222`
+- `NATS_SUBJECT`，默认 `signals.options.entry`
+
+发布 `entry` 类消息：
+
+```bash
+uv run discord-publish-orders data/discord_channel_1496916217523470468_last3d.orders.jsonl
+```
+
+如果你希望按类别拆 topic：
+
+```bash
+uv run discord-publish-orders \
+	data/discord_channel_1496916217523470468_last3d.orders.jsonl \
+	--categories entry,add,exit,update \
+	--subject-template 'signals.options.{category}'
+```
+
+这样会分别发到：
+
+- `signals.options.entry`
+- `signals.options.add`
+- `signals.options.exit`
+- `signals.options.update`
+
+Leaf 节点订阅示例：
+
+```bash
+uv run discord-subscribe-topic --subject 'signals.options.>'
+```
+
+如果你希望每个 leaf 节点都收到同一条指令，不要设置 queue group。只有在要做消费负载均衡时，才给订阅端传 `--queue-group`。
+
 如果要导出指定频道最近 3 天的消息：
 
 ```bash
