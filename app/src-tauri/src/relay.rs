@@ -1,5 +1,7 @@
+use std::path::{Path, PathBuf};
+use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Mutex, Once};
 
 use ibapi::orders::{order_builder, Action};
 use ibapi::prelude::{Client, Contract, Currency, Exchange};
@@ -8,6 +10,10 @@ use time::format_description::well_known::Rfc3339;
 use time::OffsetDateTime;
 
 pub const SNAPSHOT_EVENT: &str = "relay:snapshot";
+
+const DOTENV_SEARCH_PATHS: [&str; 3] = [".env", "../.env", "../../.env"];
+
+static ENV_FILE_LOADED: Once = Once::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -53,15 +59,21 @@ pub struct IbGatewayConfig {
 
 impl Default for IbGatewayConfig {
     fn default() -> Self {
+        load_dotenv();
+
         Self {
-            host: String::from("127.0.0.1"),
-            port: 4002,
-            client_id: 100,
-            account: String::new(),
-            default_exchange: String::from("SMART"),
-            currency: String::from("USD"),
-            dry_run: true,
-            auto_forward: true,
+            host: env_string("IB_GATEWAY_HOST").unwrap_or_else(|| String::from("127.0.0.1")),
+            port: env_parse("IB_GATEWAY_PORT").unwrap_or(4002),
+            client_id: env_parse("IB_GATEWAY_CLIENT_ID").unwrap_or(100),
+            account: env_string("IB_GATEWAY_ACCOUNT").unwrap_or_default(),
+            default_exchange: env_string("IB_GATEWAY_DEFAULT_EXCHANGE")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("SMART")),
+            currency: env_string("IB_GATEWAY_CURRENCY")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("USD")),
+            dry_run: env_bool("IB_GATEWAY_DRY_RUN").unwrap_or(true),
+            auto_forward: env_bool("IB_GATEWAY_AUTO_FORWARD").unwrap_or(true),
         }
     }
 }
@@ -322,4 +334,62 @@ impl OrderSide {
             OrderSide::Sell => "SELL",
         }
     }
+}
+
+fn load_dotenv() {
+    ENV_FILE_LOADED.call_once(|| {
+        for path in dotenv_candidates() {
+            if dotenvy::from_path(&path).is_ok() {
+                break;
+            }
+        }
+    });
+}
+
+fn dotenv_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        append_dotenv_candidates(&mut candidates, &current_dir);
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            append_dotenv_candidates(&mut candidates, exe_dir);
+        }
+    }
+
+    candidates
+}
+
+fn append_dotenv_candidates(candidates: &mut Vec<PathBuf>, base_dir: &Path) {
+    for relative_path in DOTENV_SEARCH_PATHS {
+        let candidate = base_dir.join(relative_path);
+
+        if !candidates.iter().any(|existing| existing == &candidate) {
+            candidates.push(candidate);
+        }
+    }
+}
+
+fn env_string(key: &str) -> Option<String> {
+    std::env::var(key)
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn env_parse<T>(key: &str) -> Option<T>
+where
+    T: FromStr,
+{
+    env_string(key).and_then(|value| value.parse::<T>().ok())
+}
+
+fn env_bool(key: &str) -> Option<bool> {
+    env_string(key).and_then(|value| match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    })
 }

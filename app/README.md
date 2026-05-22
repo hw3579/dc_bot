@@ -23,6 +23,21 @@ pnpm install
 pnpm tauri dev
 ```
 
+## 环境变量
+
+桌面端会在启动时读取仓库根目录的 .env，并把这些值作为 IB Gateway 面板的默认配置：
+
+- IB_GATEWAY_HOST
+- IB_GATEWAY_PORT
+- IB_GATEWAY_CLIENT_ID
+- IB_GATEWAY_ACCOUNT
+- IB_GATEWAY_DEFAULT_EXCHANGE
+- IB_GATEWAY_CURRENCY
+- IB_GATEWAY_DRY_RUN
+- IB_GATEWAY_AUTO_FORWARD
+
+如果没有读到这些变量，就会回退到代码内置默认值。
+
 ## 验证
 
 ```bash
