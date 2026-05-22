@@ -99,7 +99,9 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: options-relay-*
           path: release-artifacts
+          merge-multiple: true
 
       - name: Publish draft release
         uses: softprops/action-gh-release@v2
@@ -107,8 +109,8 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            release-artifacts/**/*.exe
-            release-artifacts/**/options-relay-macos
+            release-artifacts/options-relay-windows.exe
+            release-artifacts/options-relay-macos
 
   nightly_release:
     name: Publish Nightly Release
@@ -124,7 +126,9 @@ jobs:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: options-relay-*
           path: release-artifacts
+          merge-multiple: true
 
       - name: Remove previous nightly release
         env:
@@ -141,8 +145,8 @@ jobs:
           shopt -s globstar nullglob
 
           files=(
-            release-artifacts/**/*.exe
-            release-artifacts/**/options-relay-macos
+            release-artifacts/options-relay-windows.exe
+            release-artifacts/options-relay-macos
           )
 
           if [[ ${#files[@]} -eq 0 ]]; then
