@@ -23,6 +23,20 @@ pnpm install
 pnpm tauri dev
 ```
 
+## 构建单文件版本
+
+当前默认构建目标是非 installer 的单文件可执行程序：
+
+```bash
+cd app
+pnpm tauri build --no-bundle
+```
+
+构建产物位置：
+
+- Windows: `app/src-tauri/target/release/ib-options-relay.exe`
+- macOS: `app/src-tauri/target/release/ib-options-relay`
+
 ## 环境变量
 
 桌面端会在启动时读取仓库根目录的 .env，并把这些值作为 IB Gateway 面板的默认配置：
@@ -37,6 +51,15 @@ pnpm tauri dev
 - IB_GATEWAY_AUTO_FORWARD
 
 如果没有读到这些变量，就会回退到代码内置默认值。
+
+## 本地 JSON 存储
+
+应用会把当前配置和消息队列保存到 `options-relay-state.json`：
+
+- 开发模式下保存在 `app/options-relay-state.json`
+- 单文件 release 模式下保存在可执行文件所在目录
+
+也就是说，你把可执行文件放在哪个目录运行，对应 JSON 就会写在那个目录下面。
 
 ## 验证
 

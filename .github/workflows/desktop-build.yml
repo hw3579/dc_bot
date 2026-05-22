@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   build:
-    name: Build ${{ matrix.platform.name }} bundle
+    name: Build ${{ matrix.platform.name }} standalone app
     runs-on: ${{ matrix.platform.os }}
     strategy:
       fail-fast: false
@@ -30,9 +30,13 @@ jobs:
           - os: windows-latest
             name: Windows
             artifact_name: windows
+            binary_path: app/src-tauri/target/release/ib-options-relay.exe
+            output_name: options-relay-windows.exe
           - os: macos-latest
             name: macOS
             artifact_name: macos
+            binary_path: app/src-tauri/target/release/ib-options-relay
+            output_name: options-relay-macos
 
     steps:
       - name: Checkout repository
@@ -64,23 +68,24 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile
 
-      - name: Build Tauri desktop bundles
+      - name: Build standalone desktop app
         working-directory: app
         env:
           CI: "true"
-        run: pnpm tauri build
+        run: pnpm tauri build --no-bundle
 
-      - name: Upload desktop bundles
+      - name: Stage standalone app
+        shell: bash
+        run: |
+          mkdir -p portable
+          cp "${{ matrix.platform.binary_path }}" "portable/${{ matrix.platform.output_name }}"
+
+      - name: Upload standalone app
         uses: actions/upload-artifact@v4
         with:
           name: options-relay-${{ matrix.platform.artifact_name }}
           if-no-files-found: error
-          path: |
-            app/src-tauri/target/release/bundle/**/*.app.tar.gz
-            app/src-tauri/target/release/bundle/**/*.dmg
-            app/src-tauri/target/release/bundle/**/*.exe
-            app/src-tauri/target/release/bundle/**/*.msi
-            app/src-tauri/target/release/bundle/**/*.zip
+          path: portable/${{ matrix.platform.output_name }}
 
   release:
     name: Draft GitHub Release
@@ -102,11 +107,8 @@ jobs:
           draft: true
           generate_release_notes: true
           files: |
-            release-artifacts/**/*.app.tar.gz
-            release-artifacts/**/*.dmg
             release-artifacts/**/*.exe
-            release-artifacts/**/*.msi
-            release-artifacts/**/*.zip
+            release-artifacts/**/options-relay-macos
 
   nightly_release:
     name: Publish Nightly Release
@@ -139,11 +141,8 @@ jobs:
           shopt -s globstar nullglob
 
           files=(
-            release-artifacts/**/*.app.tar.gz
-            release-artifacts/**/*.dmg
             release-artifacts/**/*.exe
-            release-artifacts/**/*.msi
-            release-artifacts/**/*.zip
+            release-artifacts/**/options-relay-macos
           )
 
           if [[ ${#files[@]} -eq 0 ]]; then

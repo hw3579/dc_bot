@@ -1,8 +1,9 @@
 mod relay;
 
 use relay::{
-    relay_to_ib, validate_signal, AppState, IbGatewayConfig, OptionSignalInput, RelayMessage,
-    RelayReceipt, RelayStats, RelayStatus, RuntimeSnapshot, SNAPSHOT_EVENT,
+    persist_runtime_snapshot, relay_to_ib, validate_signal, AppState, IbGatewayConfig,
+    OptionSignalInput, RelayMessage, RelayReceipt, RelayStats, RelayStatus, RuntimeSnapshot,
+    SNAPSHOT_EVENT,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -153,6 +154,8 @@ fn emit_snapshot(app: &AppHandle) -> Result<RuntimeSnapshot, String> {
         build_snapshot(&state)?
     };
 
+    persist_runtime_snapshot(&snapshot)?;
+
     app.emit(SNAPSHOT_EVENT, snapshot.clone())
         .map_err(|error| error.to_string())?;
 
@@ -186,7 +189,7 @@ fn mutate_message(
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .manage(AppState::default())
+        .manage(AppState::load())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             bootstrap_state,

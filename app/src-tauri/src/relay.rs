@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +13,7 @@ use time::OffsetDateTime;
 pub const SNAPSHOT_EVENT: &str = "relay:snapshot";
 
 const DOTENV_SEARCH_PATHS: [&str; 3] = [".env", "../.env", "../../.env"];
+const STATE_FILE_NAME: &str = "options-relay-state.json";
 
 static ENV_FILE_LOADED: Once = Once::new();
 
@@ -143,6 +145,22 @@ pub struct RuntimeSnapshot {
     pub stats: RelayStats,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PersistedState {
+    broker_config: IbGatewayConfig,
+    messages: Vec<RelayMessage>,
+}
+
+impl Default for PersistedState {
+    fn default() -> Self {
+        Self {
+            broker_config: IbGatewayConfig::default(),
+            messages: Vec::new(),
+        }
+    }
+}
+
 pub struct AppState {
     pub config: Mutex<IbGatewayConfig>,
     pub messages: Mutex<Vec<RelayMessage>>,
@@ -160,6 +178,31 @@ impl Default for AppState {
 }
 
 impl AppState {
+    pub fn load() -> Self {
+        let persisted = match load_persisted_state() {
+            Ok(Some(state)) => state,
+            Ok(None) => PersistedState::default(),
+            Err(error) => {
+                eprintln!("failed to load persisted relay state: {error}");
+                PersistedState::default()
+            }
+        };
+
+        let next_id = persisted
+            .messages
+            .iter()
+            .map(|message| message.id)
+            .max()
+            .unwrap_or(0)
+            .saturating_add(1);
+
+        Self {
+            config: Mutex::new(persisted.broker_config),
+            messages: Mutex::new(persisted.messages),
+            next_id: AtomicU64::new(next_id),
+        }
+    }
+
     pub fn next_message_id(&self) -> u64 {
         self.next_id.fetch_add(1, Ordering::Relaxed)
     }
@@ -392,4 +435,57 @@ fn env_bool(key: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     })
+}
+
+pub fn persist_runtime_snapshot(snapshot: &RuntimeSnapshot) -> Result<(), String> {
+    let state = PersistedState {
+        broker_config: snapshot.broker_config.clone(),
+        messages: snapshot.messages.clone(),
+    };
+
+    let payload = serde_json::to_string_pretty(&state).map_err(|error| error.to_string())?;
+    let path = state_file_path();
+
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!("无法创建本地状态目录 {}: {error}", parent.display())
+        })?;
+    }
+
+    fs::write(&path, payload)
+        .map_err(|error| format!("无法写入本地状态文件 {}: {error}", path.display()))
+}
+
+fn load_persisted_state() -> Result<Option<PersistedState>, String> {
+    let path = state_file_path();
+
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let payload = fs::read_to_string(&path)
+        .map_err(|error| format!("无法读取本地状态文件 {}: {error}", path.display()))?;
+
+    let state = serde_json::from_str::<PersistedState>(&payload)
+        .map_err(|error| format!("无法解析本地状态文件 {}: {error}", path.display()))?;
+
+    Ok(Some(state))
+}
+
+fn state_file_path() -> PathBuf {
+    if cfg!(debug_assertions) {
+        if let Ok(current_dir) = std::env::current_dir() {
+            return current_dir.join(STATE_FILE_NAME);
+        }
+    }
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(parent) = current_exe.parent() {
+            return parent.join(STATE_FILE_NAME);
+        }
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join(STATE_FILE_NAME)
 }
