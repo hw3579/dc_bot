@@ -1,0 +1,54 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="relay-bg" x1="72" y1="56" x2="436" y2="452" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#10283F" />
+      <stop offset="1" stop-color="#1F4467" />
+    </linearGradient>
+    <linearGradient id="relay-teal" x1="142" y1="144" x2="388" y2="244" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0F8B8D" />
+      <stop offset="1" stop-color="#72D1C7" />
+    </linearGradient>
+    <linearGradient id="relay-sand" x1="116" y1="302" x2="398" y2="374" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4A261" />
+      <stop offset="1" stop-color="#E9C46A" />
+    </linearGradient>
+  </defs>
+
+  <rect x="32" y="32" width="448" height="448" rx="118" fill="url(#relay-bg)" />
+  <circle cx="256" cy="256" r="140" stroke="#F4EFE6" stroke-opacity="0.14" stroke-width="38" />
+
+  <path
+    d="M144 278C144 206.203 202.203 148 274 148C308.283 148 338.96 160.177 361.776 184.099"
+    stroke="url(#relay-teal)"
+    stroke-width="44"
+    stroke-linecap="round"
+  />
+  <path
+    d="M354 128L410 136L402 192"
+    stroke="#72D1C7"
+    stroke-width="28"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M368 234C368 305.797 309.797 364 238 364C202.546 364 170.905 349.884 148.003 326.98"
+    stroke="url(#relay-sand)"
+    stroke-width="44"
+    stroke-linecap="round"
+  />
+  <path
+    d="M158 382L102 374L110 318"
+    stroke="#F4C16F"
+    stroke-width="28"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+
+  <path
+    d="M244 132H298V242H356L228 392V282H170L244 132Z"
+    fill="#D95D39"
+  />
+
+  <circle cx="370" cy="340" r="18" fill="#F4EFE6" fill-opacity="0.92" />
+</svg>
