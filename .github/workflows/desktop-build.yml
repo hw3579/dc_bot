@@ -115,6 +115,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - name: Download build artifacts
