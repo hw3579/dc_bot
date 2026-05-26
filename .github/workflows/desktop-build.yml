@@ -55,6 +55,11 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
 
+      - name: Setup Python for PyO3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -72,6 +77,7 @@ jobs:
         working-directory: app
         env:
           CI: "true"
+          PYO3_PYTHON: python
         run: pnpm tauri build --no-bundle
 
       - name: Stage standalone app
