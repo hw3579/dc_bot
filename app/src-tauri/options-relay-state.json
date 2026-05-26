@@ -1,0 +1,68 @@
+{
+  "brokerConfig": {
+    "host": "127.0.0.1",
+    "port": 4002,
+    "clientId": 100,
+    "account": "",
+    "defaultExchange": "SMART",
+    "currency": "USD",
+    "dryRun": true,
+    "autoForward": true
+  },
+  "natsConfig": {
+    "serverAddress": "127.0.0.1:4222",
+    "subject": "signals.options.entry",
+    "queueGroup": "",
+    "autoSubscribe": true
+  },
+  "messages": [
+    {
+      "id": 2,
+      "receivedAt": "2026-05-23T07:02:24.003986935Z",
+      "signal": {
+        "source": "Enrich Trades",
+        "strategyTag": "discord:entry",
+        "symbol": "INTC",
+        "optionType": "call",
+        "expiry": "2026-05-22",
+        "strike": 125.0,
+        "side": "buy",
+        "quantity": 1.0,
+        "limitPrice": 2.0,
+        "rawMessage": "$INTC $125 calls weekly for $2.00\n\nLet’s see if we can make a new HOD\n\n@everyone $alert"
+      },
+      "status": "sent",
+      "relayNotes": "dry-run: 已生成 BUY 1 INTC 125C 合约与订单",
+      "receipt": {
+        "broker": "ibkr",
+        "orderId": null,
+        "message": "dry-run: 已生成 BUY 1 INTC 125C 合约与订单",
+        "simulated": true
+      }
+    },
+    {
+      "id": 1,
+      "receivedAt": "2026-05-23T03:56:24.862264299Z",
+      "signal": {
+        "source": "Enrich Trades",
+        "strategyTag": "discord:entry",
+        "symbol": "INTC",
+        "optionType": "call",
+        "expiry": "2026-05-22",
+        "strike": 125.0,
+        "side": "buy",
+        "quantity": 1.0,
+        "limitPrice": 2.0,
+        "rawMessage": "$INTC $125 calls weekly for $2.00\n\nLet’s see if we can make a new HOD\n\n@everyone $alert"
+      },
+      "status": "sent",
+      "relayNotes": "dry-run: 已生成 BUY 1 INTC 125C 合约与订单",
+      "receipt": {
+        "broker": "ibkr",
+        "orderId": null,
+        "message": "dry-run: 已生成 BUY 1 INTC 125C 合约与订单",
+        "simulated": true
+      }
+    }
+  ]
+}

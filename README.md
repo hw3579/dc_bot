@@ -22,6 +22,11 @@ cp .env.example .env
 - 可选：`DISCORD_OUTPUT_FILE`
 - 可选：`DISCORD_REQUEST_DELAY_SECONDS`
 - 可选：`DISCORD_PROXY_URL`，例如 `http://127.0.0.1:10808`
+- 可选：`DISCORD_POLL_INTERVAL_SECONDS`，实时监控轮询间隔，默认 `2.0`
+- 可选：`DISCORD_MONITOR_STATE_FILE`，实时监控游标状态文件
+- 可选：`DISCORD_DEFAULT_ENTRY_CONTRACT_TYPE`，当消息没写 calls/puts 时的显式兜底值
+- 可选：`DISCORD_DEFAULT_ENTRY_EXPIRY_LABEL`，当消息没写到期标签时的显式兜底值
+- 可选：`DISCORD_AUDIT_CHANNEL_ID`，把准备发给 Tauri 的原始 JSON 发到这个校验频道
 
 ## 运行
 
@@ -104,3 +109,123 @@ uv run discord-subscribe-topic --subject 'signals.options.>'
 ```bash
 uv run discord-export --channel-id 1496916217523470468 --since-days 3 --output-file discord_channel_messages_last_3_days.jsonl
 ```
+
+## 实时监控并自动发布
+
+如果你希望服务端常驻监控 Discord，只要来了新的 order-like 消息就立刻发到本机 NATS：
+
+```bash
+uv run discord-watch-orders
+```
+
+这个命令会：
+
+- 读取上面的 Discord / NATS 配置
+- 在 `DISCORD_MONITOR_STATE_FILE` 里保存最后处理过的 message id，避免重启后重复发历史消息
+- 把所有新消息追加到 `DISCORD_OUTPUT_FILE`
+- 把命中的 order-like 记录追加到对应的 `.orders.jsonl`
+- 只对“新消息”做过滤和发布，不会在首次启动时把整个历史频道重新扫一遍
+
+如果消息里缺少 calls/puts 或缺少 expiry label，而你又接受显式默认值，可以在 `.env` 里设置：
+
+- `DISCORD_DEFAULT_ENTRY_CONTRACT_TYPE=call`
+- `DISCORD_DEFAULT_ENTRY_EXPIRY_LABEL=weekly`
+
+如果 entry 文案里缺少 expiry label，但结构已经足够明确，监控器还会按消息时间换算到美东时区，并自动补成该自然周的周五到期日；audit 里会额外标记 `expiry_inferred=current_week_friday_eastern`。
+
+仍然缺少必要字段时，监控器会跳过这些信息不完整、无法安全自动下单的消息，并在日志里说明原因。
+
+如果你设置了 `DISCORD_AUDIT_CHANNEL_ID`，每条命中的 order-like 消息还会额外把“准备发给 Tauri 的原始 JSON”发到该频道，内容里会带上：
+
+- `relayReady`：这条消息是否已经满足下发条件
+- `relayError`：如果还不能正式发给 relay，缺的是哪几个字段
+- `signal`：当前解析出来的原始字段
+
+## Linux systemd 安装
+
+仓库现在自带 user-level systemd 安装和卸载脚本，以及两个 service 模板：
+
+- `scripts/install-systemd-user.sh`
+- `scripts/uninstall-systemd-user.sh`
+- `systemd/user/dc-bot-discord-watch.service.tpl`
+- `systemd/user/dc-bot-ib-relay.service.tpl`
+
+默认会安装两个服务：
+
+- `dc-bot-discord-watch.service`：常驻轮询 Discord 并把新消息发到 NATS
+- `dc-bot-ib-relay.service`：以 `--headless` 模式启动本地 relay 并自动订阅 NATS；broker/NATS 配置由客户端自己的 JSON 管理
+
+如果两端在同一台机器：
+
+```bash
+./scripts/install-systemd-user.sh
+```
+
+如果这台机器只跑 Discord watcher：
+
+```bash
+./scripts/install-systemd-user.sh --watcher-only
+```
+
+如果这台机器只跑 headless relay：
+
+```bash
+./scripts/install-systemd-user.sh --relay-only
+```
+
+安装脚本会把 release relay 二进制复制到 `~/.local/share/dc-bot/bin/ib-options-relay`，并把 user service 写到 `~/.config/systemd/user/`。
+
+卸载示例：
+
+```bash
+./scripts/uninstall-systemd-user.sh
+./scripts/uninstall-systemd-user.sh --watcher-only
+./scripts/uninstall-systemd-user.sh --relay-only
+```
+
+常用 systemd 命令：
+
+```bash
+systemctl --user status dc-bot-discord-watch.service
+systemctl --user status dc-bot-ib-relay.service
+journalctl --user -u dc-bot-discord-watch.service -f
+journalctl --user -u dc-bot-ib-relay.service -f
+```
+
+如果你希望 user service 在退出桌面会话后也继续跑，需要额外启用 linger：
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+## Tauri relay 多券商
+
+桌面端 / headless relay 现在已经把券商执行层拆成独立模块，当前支持：
+
+- `broker=ibkr`：继续走原来的 `ibapi` 异步下单
+- `broker=moomoo`：通过 PyO3 调 Python SDK，再调用 `moomoo-api` / `futu-api`
+
+客户端配置现在独立保存在 Tauri/headless 自己的 JSON 文件里，不再依赖 exporter 的 `.env`：
+
+- Broker 配置和 NATS 订阅配置：保存在客户端 config JSON
+- 消息队列和投递结果：保存在客户端 runtime JSON
+- 具体文件路径可以直接在 Tauri 页面里看到
+- 如果你想做便携式部署，也可以通过环境变量 `OPTIONS_RELAY_HOME` 把这两个 JSON 固定到你指定的目录
+
+如果这是给客户直接使用的跟单客户端，Tauri 页面现在有一个“客户跟单快速配置”区，可以按这个顺序操作：
+
+1. 先点 `IBKR 模拟模板` 或 `Moomoo 模拟模板`
+2. 填好 NATS Server 和 Subject
+3. 设置 `Default Quantity` 作为默认仓位大小
+4. 打开 `Auto Subscribe` 和 `Auto Relay`
+5. 先保持 `Dry Run`，点 `一键保存跟单配置`
+6. 等客户端实际接到几条消息并确认仓位无误后，再切到 Live
+
+Moomoo 模式需要：
+
+- 本机已启动 OpenD
+- `uv sync` 已安装 `moomoo-api`
+- 在客户端 UI 或客户端 config JSON 里配置 `Moomoo Host`、`OpenD Port`、`Trade Env` 等字段
+- 如果你用的是 `REAL` 环境，还需要额外提供 `MOOMOO_TRADE_PASSWORD` 或 `MOOMOO_TRADE_PASSWORD_MD5`
+
+Moomoo 期权下单时，relay 会先根据 `symbol + expiry + call/put + strike` 查询 option chain，再把匹配到的期权代码传给交易接口，所以上游仍然只需要传统一的下单指令 JSON。

@@ -128,10 +128,20 @@ async def get_messages_page(
     headers: dict[str, str],
     request_context: RequestContext,
     before: str | None = None,
+    after: str | None = None,
+    limit: int = 100,
 ) -> list[dict[str, Any]]:
-    params: dict[str, str | int] = {"limit": 100}
+    if before and after:
+        raise ValueError("before and after cannot be used at the same time")
+
+    if limit < 1 or limit > 100:
+        raise ValueError("limit must be between 1 and 100")
+
+    params: dict[str, str | int] = {"limit": limit}
     if before:
         params["before"] = before
+    if after:
+        params["after"] = after
 
     url = f"{API_BASE}/channels/{channel_id}/messages"
 
@@ -158,12 +168,16 @@ async def request_json_once(
     params: dict[str, str | int] | None,
     proxy: str | None,
     forbidden_message: str,
+    method: str = "GET",
+    json_body: dict[str, Any] | None = None,
 ) -> Any:
     while True:
-        async with session.get(
+        async with session.request(
+            method,
             url,
             headers=headers,
             params=params,
+            json=json_body,
             proxy=proxy,
         ) as response:
             if response.status == 429:
@@ -192,6 +206,8 @@ async def request_json(
     params: dict[str, str | int] | None,
     forbidden_message: str,
     unexpected_message: str,
+    method: str = "GET",
+    json_body: dict[str, Any] | None = None,
 ) -> Any:
     if request_context.use_proxy and request_context.proxy_url:
         payload = await request_json_once(
@@ -201,6 +217,8 @@ async def request_json(
             params=params,
             proxy=request_context.proxy_url,
             forbidden_message=forbidden_message,
+            method=method,
+            json_body=json_body,
         )
         if payload is None:
             raise RuntimeError(unexpected_message)
@@ -214,6 +232,8 @@ async def request_json(
             params=params,
             proxy=None,
             forbidden_message=forbidden_message,
+            method=method,
+            json_body=json_body,
         )
     except (aiohttp.ClientConnectionError, asyncio.TimeoutError) as exc:
         if not request_context.proxy_url:
@@ -227,6 +247,8 @@ async def request_json(
             params=params,
             proxy=request_context.proxy_url,
             forbidden_message=forbidden_message,
+            method=method,
+            json_body=json_body,
         )
 
     if payload is None:
@@ -252,6 +274,33 @@ async def get_channel_info(
     )
     if not isinstance(payload, dict):
         raise RuntimeError("Unexpected Discord API response when reading channel info.")
+    return payload
+
+
+async def create_channel_message(
+    session: aiohttp.ClientSession,
+    channel_id: str,
+    headers: dict[str, str],
+    request_context: RequestContext,
+    content: str,
+) -> dict[str, Any]:
+    url = f"{API_BASE}/channels/{channel_id}/messages"
+    payload = await request_json(
+        session=session,
+        url=url,
+        headers=headers,
+        request_context=request_context,
+        params=None,
+        forbidden_message="403 Forbidden: bot lacks permission to send messages to this channel.",
+        unexpected_message="Unexpected Discord API response when creating a message.",
+        method="POST",
+        json_body={
+            "content": content,
+            "allowed_mentions": {"parse": []},
+        },
+    )
+    if not isinstance(payload, dict):
+        raise RuntimeError("Unexpected Discord API response when creating a message.")
     return payload
 
 

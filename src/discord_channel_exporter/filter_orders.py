@@ -4,11 +4,19 @@ import argparse
 import json
 import re
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 SYMBOL_RE = re.compile(r"\$([A-Z]{1,6})\b")
 PRICE_RE = re.compile(r"\$(\d+(?:\.\d+)?|\.\d+)")
+CONTRACT_TYPE_RE = re.compile(r"\b(calls?|puts?)\b", re.IGNORECASE)
+EXPIRY_LABEL_RE = re.compile(
+    r"\b(weekly|weeklies|0dte|1dte|daily|tomorrow|next week)\b",
+    re.IGNORECASE,
+)
+ENTRY_LABEL_RE = re.compile(r"\b(lotto|starter|swing|scalp)\b", re.IGNORECASE)
 OPTION_ENTRY_PATTERNS = [
     re.compile(
         r"\$(?P<symbol>[A-Z]{1,6})\s+\$(?P<strike>\d+(?:\.\d+)?)\s+"
@@ -70,6 +78,7 @@ THRESHOLDS = {
     "exit": 4,
     "update": 4,
 }
+EASTERN_TZ = ZoneInfo("America/New_York")
 
 
 def parse_args() -> argparse.Namespace:
@@ -137,7 +146,102 @@ def normalize_price(value: str | None) -> str | None:
     return value if value.startswith("0") or not value.startswith(".") else f"0{value}"
 
 
+def normalize_contract_type(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if normalized in {"call", "calls"}:
+        return "calls"
+    if normalized in {"put", "puts"}:
+        return "puts"
+    return None
+
+
+def normalize_expiry_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    if not normalized:
+        return None
+
+    if normalized == "weeklies":
+        return "weekly"
+    return normalized
+
+
+def parse_message_timestamp(value: str | None) -> datetime:
+    if not value:
+        return datetime.now(timezone.utc)
+
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def infer_friday_expiry_date_eastern(timestamp: str | None) -> str:
+    reference = parse_message_timestamp(timestamp).astimezone(EASTERN_TZ)
+    eastern_date = reference.date()
+    friday = eastern_date + timedelta(days=4 - eastern_date.weekday())
+    return friday.isoformat()
+
+
+def resolve_expiry_date(timestamp: str | None, expiry_label: str) -> str:
+    reference = parse_message_timestamp(timestamp)
+    current_date = reference.date()
+    normalized = normalize_expiry_label(expiry_label)
+
+    if normalized in {"0dte", "daily"}:
+        target_date = current_date
+    elif normalized in {"1dte", "tomorrow"}:
+        target_date = current_date + timedelta(days=1)
+    elif normalized == "weekly":
+        target_date = current_date + timedelta(days=(4 - current_date.weekday()) % 7)
+    elif normalized == "next week":
+        target_date = current_date + timedelta(
+            days=((4 - current_date.weekday()) % 7) + 7
+        )
+    else:
+        raise RuntimeError(f"Unsupported expiry label: {expiry_label}")
+
+    return target_date.isoformat()
+
+
+def extract_entry_fallback(text: str, symbols: list[str]) -> dict[str, Any] | None:
+    if not symbols:
+        return None
+
+    prices = [normalize_price(value) for value in PRICE_RE.findall(text)]
+    contract_match = CONTRACT_TYPE_RE.search(text)
+    expiry_match = EXPIRY_LABEL_RE.search(text)
+    label_match = ENTRY_LABEL_RE.search(text)
+
+    if len(prices) < 2:
+        return None
+
+    if contract_match is None and expiry_match is None and label_match is None:
+        return None
+
+    parsed: dict[str, Any] = {
+        "symbol": symbols[0],
+        "strike": prices[0],
+        "price": prices[-1],
+    }
+
+    if contract_match is not None:
+        parsed["contract_type"] = normalize_contract_type(contract_match.group(1))
+
+    if expiry_match is not None:
+        parsed["expiry_label"] = normalize_expiry_label(expiry_match.group(1))
+
+    if label_match is not None:
+        parsed["label"] = label_match.group(1).lower()
+
+    return parsed
+
+
 def extract_entry(text: str) -> dict[str, Any] | None:
+    symbols = unique_symbols(text)
+
     for pattern in OPTION_ENTRY_PATTERNS:
         match = pattern.search(text)
         if not match:
@@ -146,11 +250,63 @@ def extract_entry(text: str) -> dict[str, Any] | None:
         if "price" in parsed:
             parsed["price"] = normalize_price(parsed["price"])
         if contract_type := parsed.get("contract_type"):
-            parsed["contract_type"] = contract_type.lower()
+            parsed["contract_type"] = normalize_contract_type(contract_type)
         if expiry_label := parsed.get("expiry_label"):
-            parsed["expiry_label"] = expiry_label.lower()
+            parsed["expiry_label"] = normalize_expiry_label(expiry_label)
         return parsed
-    return None
+
+    return extract_entry_fallback(text, symbols)
+
+
+def prepare_record_for_relay(
+    record: dict[str, Any],
+    default_contract_type: str | None = None,
+    default_expiry_label: str | None = None,
+) -> tuple[dict[str, Any], str | None]:
+    prepared = dict(record)
+    parsed_entry = prepared.get("parsed_entry")
+
+    if not isinstance(parsed_entry, dict):
+        return prepared, "missing parsed_entry"
+
+    next_entry = {
+        key: value for key, value in parsed_entry.items() if value not in (None, "")
+    }
+
+    if contract_type := normalize_contract_type(next_entry.get("contract_type")):
+        next_entry["contract_type"] = contract_type
+    elif contract_type := normalize_contract_type(default_contract_type):
+        next_entry["contract_type"] = contract_type
+
+    if expiry_label := normalize_expiry_label(next_entry.get("expiry_label")):
+        next_entry["expiry_label"] = expiry_label
+    elif expiry_label := normalize_expiry_label(default_expiry_label):
+        next_entry["expiry_label"] = expiry_label
+
+    if "price" in next_entry:
+        next_entry["price"] = normalize_price(str(next_entry["price"]))
+
+    if "strike" in next_entry:
+        next_entry["strike"] = normalize_price(str(next_entry["strike"]))
+
+    if expiry_label := normalize_expiry_label(next_entry.get("expiry_label")):
+        next_entry["expiry_label"] = expiry_label
+        next_entry["expiry"] = resolve_expiry_date(record.get("timestamp"), expiry_label)
+    elif record.get("category") == "entry":
+        next_entry["expiry"] = infer_friday_expiry_date_eastern(record.get("timestamp"))
+        next_entry["expiry_inferred"] = "current_week_friday_eastern"
+
+    prepared["parsed_entry"] = next_entry
+
+    missing_fields: list[str] = []
+    for field_name in ("symbol", "strike", "contract_type", "expiry"):
+        if not next_entry.get(field_name):
+            missing_fields.append(field_name)
+
+    if missing_fields:
+        return prepared, f"missing relay fields: {', '.join(missing_fields)}"
+
+    return prepared, None
 
 
 def score_category(text: str, symbols: list[str]) -> tuple[str | None, int, list[str], dict[str, Any] | None]:
@@ -213,7 +369,7 @@ def filter_message(message: dict[str, Any], min_score: int) -> dict[str, Any] | 
     if category is None or score < min_score:
         return None
 
-    return {
+    record = {
         "message_id": message.get("id"),
         "channel_id": message.get("channel_id"),
         "timestamp": message.get("timestamp"),
@@ -227,6 +383,9 @@ def filter_message(message: dict[str, Any], min_score: int) -> dict[str, Any] | 
         "content": message.get("content", ""),
         "attachment_count": len(message.get("attachments", [])),
     }
+
+    prepared_record, _ = prepare_record_for_relay(record)
+    return prepared_record
 
 
 def default_output_path(input_path: Path) -> Path:

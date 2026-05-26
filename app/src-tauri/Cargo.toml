@@ -22,7 +22,12 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+async-nats = "0.39"
+directories = "5"
+futures-util = "0.3"
 ibapi = { version = "2.12.0", default-features = false, features = ["async"] }
-time = { version = "0.3", features = ["formatting"] }
+pyo3 = { version = "0.22", features = ["auto-initialize"] }
+time = { version = "0.3", features = ["formatting", "parsing"] }
 dotenvy = "0.15"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time"] }
 

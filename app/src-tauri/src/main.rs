@@ -2,5 +2,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    ib_options_relay_lib::run()
+    let headless = std::env::args().skip(1).any(|argument| argument == "--headless");
+
+    if headless {
+        ib_options_relay_lib::run_headless();
+    } else {
+        ib_options_relay_lib::run();
+    }
 }

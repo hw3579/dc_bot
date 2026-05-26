@@ -313,6 +313,10 @@ body {
   padding: 28px;
 }
 
+.quickstart-panel {
+  padding: 28px;
+}
+
 .info-card {
   padding: 18px;
   border-radius: 20px;
@@ -329,6 +333,121 @@ body {
   margin: 8px 0 0;
   line-height: 1.6;
   color: var(--muted);
+}
+
+.setup-summary {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 24px;
+  border: 1px solid rgba(16, 40, 63, 0.08);
+  background: linear-gradient(135deg, rgba(15, 139, 141, 0.14), rgba(255, 252, 246, 0.88));
+}
+
+.setup-summary-ready {
+  background: linear-gradient(135deg, rgba(76, 149, 108, 0.16), rgba(255, 252, 246, 0.9));
+}
+
+.setup-counter {
+  display: grid;
+  align-content: center;
+  gap: 6px;
+  min-width: 92px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  background: rgba(255, 252, 246, 0.72);
+  text-align: center;
+}
+
+.setup-counter strong {
+  font-size: 1.8rem;
+  line-height: 1;
+}
+
+.setup-counter span,
+.setup-copy p,
+.setup-card p,
+.quickstart-footer p {
+  color: var(--muted);
+}
+
+.setup-copy {
+  align-self: center;
+}
+
+.setup-copy strong {
+  display: block;
+  font-size: 1rem;
+}
+
+.setup-copy p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+
+.setup-card-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 18px;
+}
+
+.setup-card {
+  padding: 16px;
+  border-radius: 20px;
+  border: 1px solid rgba(16, 40, 63, 0.08);
+  background: rgba(255, 252, 246, 0.78);
+}
+
+.setup-card-ready {
+  border-color: rgba(76, 149, 108, 0.28);
+  background: rgba(76, 149, 108, 0.1);
+}
+
+.setup-card span {
+  display: inline-flex;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--ocean);
+}
+
+.setup-card strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.setup-card p {
+  margin: 8px 0 0;
+  line-height: 1.6;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.ghost-button {
+  background: rgba(255, 252, 246, 0.5);
+  border-color: rgba(16, 40, 63, 0.12);
+  color: var(--ink);
+  box-shadow: none;
+}
+
+.ghost-button:hover:not(:disabled) {
+  box-shadow: none;
+  background: rgba(255, 252, 246, 0.9);
+}
+
+.quickstart-note {
+  margin-top: 18px;
+}
+
+.quickstart-footer {
+  margin-top: 18px;
 }
 
 .section-heading {
@@ -597,15 +716,23 @@ button:disabled {
   }
 
   .two-columns,
-  .route-badge-grid {
+  .route-badge-grid,
+  .setup-card-grid,
+  .quick-actions {
     grid-template-columns: 1fr;
   }
 
   .panel-footer,
   .section-heading,
-  .ticket-header {
+  .ticket-header,
+  .setup-summary {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  .setup-summary {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .panel-footer button {

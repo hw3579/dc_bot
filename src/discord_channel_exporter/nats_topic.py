@@ -12,6 +12,8 @@ from typing import Any
 import nats
 from dotenv import load_dotenv
 
+from .filter_orders import prepare_record_for_relay
+
 DEFAULT_SERVER_ADDRESS = "127.0.0.1:4222"
 DEFAULT_SUBJECT = "signals.options.entry"
 
@@ -82,12 +84,12 @@ def build_subject(subject_template: str, record: dict[str, Any]) -> str:
     return subject_template.format(category=str(record.get("category", "unknown")))
 
 
-def build_envelope(subject: str, record: dict[str, Any], source_file: Path) -> dict[str, Any]:
+def build_envelope(subject: str, record: dict[str, Any], source_label: str) -> dict[str, Any]:
     return {
         "eventType": "discord.order_signal",
         "publishedAt": now_rfc3339(),
         "subject": subject,
-        "sourceFile": source_file.name,
+        "sourceFile": source_label,
         "signal": record,
     }
 
@@ -110,8 +112,9 @@ async def publish_records(
     nc = await nats.connect(servers=[config.server_address])
     try:
         for record in filtered:
-            subject = build_subject(config.subject_template, record)
-            envelope = build_envelope(subject, record, input_path)
+            prepared_record, _ = prepare_record_for_relay(record)
+            subject = build_subject(config.subject_template, prepared_record)
+            envelope = build_envelope(subject, prepared_record, input_path.name)
             await nc.publish(
                 subject,
                 json.dumps(envelope, ensure_ascii=False).encode("utf-8"),
