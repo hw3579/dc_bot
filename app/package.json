@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:desktop": "tauri build --no-bundle",
+    "build:desktop:moomoo": "tauri build --no-bundle --features moomoo-python",
+    "dev:desktop:moomoo": "tauri dev --features moomoo-python"
   },
   "dependencies": {
     "react": "^19.1.0",

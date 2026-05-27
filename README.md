@@ -205,12 +205,16 @@ sudo loginctl enable-linger "$USER"
 - `broker=ibkr`：继续走原来的 `ibapi` 异步下单
 - `broker=moomoo`：通过 PyO3 调 Python SDK，再调用 `moomoo-api` / `futu-api`
 
+默认桌面便携版现在只打包 IBKR / NATS 原生链路，不包含 Moomoo Python bridge，这样 Windows 可执行文件不会再依赖 `python312.dll`。
+如果你需要 Moomoo，请在构建时显式开启 `moomoo-python` feature，例如在 `app/` 下执行 `pnpm build:desktop:moomoo`。
+GitHub Actions 现在还会额外产出一个 `options-relay-windows-moomoo.zip`，其中包含精简过的 Windows embeddable Python runtime 和 `moomoo-api` 依赖，给没有本地 Python 的机器直接使用。
+
 客户端配置现在独立保存在 Tauri/headless 自己的 JSON 文件里，不再依赖 exporter 的 `.env`：
 
-- Broker 配置和 NATS 订阅配置：保存在客户端 config JSON
-- 消息队列和投递结果：保存在客户端 runtime JSON
-- 具体文件路径可以直接在 Tauri 页面里看到
-- 如果你想做便携式部署，也可以通过环境变量 `OPTIONS_RELAY_HOME` 把这两个 JSON 固定到你指定的目录
+- Broker 配置和 NATS 订阅配置：保存在 `options-relay-config.json`
+- 消息队列和投递结果：保存在 `options-relay-runtime.json`
+- 如果设置了 `OPTIONS_RELAY_HOME`，这两个 JSON 会优先写到该目录
+- 如果目录里只有旧的 `options-relay-state.json`，当前版本会继续读取，并在下一次保存时迁移成新格式
 
 如果这是给客户直接使用的跟单客户端，Tauri 页面现在有一个“客户跟单快速配置”区，可以按这个顺序操作：
 
@@ -223,8 +227,9 @@ sudo loginctl enable-linger "$USER"
 
 Moomoo 模式需要：
 
+- 使用带 `moomoo-python` feature 的桌面构建，或者直接使用 CI 产出的 `options-relay-windows-moomoo.zip`
 - 本机已启动 OpenD
-- `uv sync` 已安装 `moomoo-api`
+- 如果是自己本地构建/运行，还需要可用的 Python 3.12 运行时，以及已安装 `moomoo-api`
 - 在客户端 UI 或客户端 config JSON 里配置 `Moomoo Host`、`OpenD Port`、`Trade Env` 等字段
 - 如果你用的是 `REAL` 环境，还需要额外提供 `MOOMOO_TRADE_PASSWORD` 或 `MOOMOO_TRADE_PASSWORD_MD5`
 

@@ -1,3 +1,8 @@
+#[cfg(target_os = "windows")]
+use std::fs;
+#[cfg(target_os = "windows")]
+use std::path::{Path, PathBuf};
+
 use pyo3::prelude::*;
 use pyo3::types::PyModule;
 use serde::{Deserialize, Serialize};
@@ -92,6 +97,8 @@ fn build_bridge_config(config: &BrokerConfig) -> MoomooBridgeConfig<'_> {
 }
 
 fn call_python_bridge(config_json: String, signal_json: String) -> Result<String, String> {
+    configure_python_runtime();
+
     Python::with_gil(|python| {
         let module = PyModule::from_code_bound(
             python,
@@ -107,4 +114,113 @@ fn call_python_bridge(config_json: String, signal_json: String) -> Result<String
             .and_then(|result| result.extract::<String>())
             .map_err(|error| format!("执行 Moomoo bridge Python 逻辑失败: {error}"))
     })
+}
+
+fn configure_python_runtime() {
+    #[cfg(target_os = "windows")]
+    {
+        let Some(runtime_dir) = resolve_windows_python_runtime_dir() else {
+            return;
+        };
+
+        let runtime_lib_dir = runtime_dir.join("Lib");
+        let site_packages_dir = runtime_lib_dir.join("site-packages");
+        let dll_dir = runtime_dir.join("DLLs");
+
+        std::env::set_var("PYTHONHOME", &runtime_dir);
+
+        let python_path_entries = [
+            runtime_dir.join("python312.zip"),
+            runtime_lib_dir.clone(),
+            site_packages_dir,
+            dll_dir.clone(),
+        ];
+
+        if let Ok(joined_paths) = std::env::join_paths(
+            python_path_entries
+                .iter()
+                .filter(|entry| entry.exists())
+                .map(PathBuf::as_path),
+        ) {
+            std::env::set_var("PYTHONPATH", joined_paths);
+        }
+
+        prepend_windows_path([runtime_dir, dll_dir]);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_windows_python_runtime_dir() -> Option<PathBuf> {
+    let env_override = env_string("MOOMOO_PYTHON_RUNTIME")
+        .or_else(|| env_string("OPTIONS_RELAY_PYTHON_RUNTIME"))
+        .map(PathBuf::from);
+
+    for candidate in env_override.into_iter().chain(default_runtime_candidates()) {
+        if is_windows_python_runtime_dir(&candidate) {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn default_runtime_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+
+    if let Ok(current_exe) = std::env::current_exe() {
+        if let Some(exe_dir) = current_exe.parent() {
+            candidates.push(exe_dir.join("python-runtime"));
+            candidates.push(exe_dir.to_path_buf());
+        }
+    }
+
+    if let Ok(current_dir) = std::env::current_dir() {
+        candidates.push(current_dir.join("python-runtime"));
+        candidates.push(current_dir);
+    }
+
+    candidates
+}
+
+#[cfg(target_os = "windows")]
+fn is_windows_python_runtime_dir(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+
+    let has_python_dll = fs::read_dir(path)
+        .ok()
+        .into_iter()
+        .flat_map(|entries| entries.filter_map(Result::ok))
+        .any(|entry| {
+            let file_name = entry.file_name();
+            let file_name = file_name.to_string_lossy().to_ascii_lowercase();
+            file_name.starts_with("python3") && file_name.ends_with(".dll")
+        });
+
+    has_python_dll && path.join("Lib").is_dir()
+}
+
+#[cfg(target_os = "windows")]
+fn prepend_windows_path(entries: [PathBuf; 2]) {
+    let mut merged_entries = Vec::new();
+
+    for entry in entries {
+        if entry.exists() && !merged_entries.iter().any(|existing| existing == &entry) {
+            merged_entries.push(entry);
+        }
+    }
+
+    if let Some(existing_path) = std::env::var_os("PATH") {
+        for entry in std::env::split_paths(&existing_path) {
+            if !merged_entries.iter().any(|existing| existing == &entry) {
+                merged_entries.push(entry);
+            }
+        }
+    }
+
+    if let Ok(path_value) = std::env::join_paths(merged_entries.iter().map(PathBuf::as_path)) {
+        std::env::set_var("PATH", path_value);
+    }
 }

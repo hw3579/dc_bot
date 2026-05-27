@@ -55,11 +55,6 @@ jobs:
           cache: pnpm
           cache-dependency-path: app/pnpm-lock.yaml
 
-      - name: Setup Python for PyO3
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -77,7 +72,6 @@ jobs:
         working-directory: app
         env:
           CI: "true"
-          PYO3_PYTHON: python
         run: pnpm tauri build --no-bundle
 
       - name: Stage standalone app
@@ -93,10 +87,105 @@ jobs:
           if-no-files-found: error
           path: portable/${{ matrix.platform.output_name }}
 
+  build_moomoo_windows:
+    name: Build Windows Moomoo portable app
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+          run_install: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: app/pnpm-lock.yaml
+
+      - name: Setup Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Restore Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            app/src-tauri -> target
+
+      - name: Install desktop app dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile
+
+      - name: Build Moomoo-enabled desktop app
+        working-directory: app
+        shell: pwsh
+        env:
+          CI: "true"
+        run: |
+          $env:PYO3_PYTHON = (Get-Command python).Source
+          pnpm build:desktop:moomoo
+
+      - name: Stage Moomoo portable app
+        shell: pwsh
+        run: |
+          $portableRoot = Join-Path $env:GITHUB_WORKSPACE 'portable/options-relay-windows-moomoo'
+          $runtimeRoot = Join-Path $portableRoot 'python-runtime'
+          $sitePackages = Join-Path $runtimeRoot 'Lib/site-packages'
+          $pythonVersion = (python -c "import sys; print('.'.join(map(str, sys.version_info[:3])))").Trim()
+          $embedZipPath = Join-Path $env:RUNNER_TEMP 'python-embed.zip'
+          $embedUrl = "https://www.python.org/ftp/python/$pythonVersion/python-$pythonVersion-embed-amd64.zip"
+
+          New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
+
+          Copy-Item 'app/src-tauri/target/release/ib-options-relay.exe' (Join-Path $portableRoot 'options-relay-windows-moomoo.exe') -Force
+
+          Invoke-WebRequest -Uri $embedUrl -OutFile $embedZipPath
+          Expand-Archive -Path $embedZipPath -DestinationPath $runtimeRoot -Force
+
+          @(
+            'python312.zip'
+            '.'
+            'Lib'
+            'Lib\site-packages'
+            'import site'
+          ) | Set-Content (Join-Path $runtimeRoot 'python312._pth') -Encoding Ascii
+
+          python -m pip install --target $sitePackages --no-compile --disable-pip-version-check --prefer-binary moomoo-api
+
+          Get-ChildItem -Path $runtimeRoot -Recurse -Directory -Filter '__pycache__' | Remove-Item -Recurse -Force
+
+          foreach ($redundantFile in @('python.exe', 'pythonw.exe', 'python.cat')) {
+            $candidate = Join-Path $runtimeRoot $redundantFile
+            if (Test-Path $candidate) {
+              Remove-Item $candidate -Force
+            }
+          }
+
+          Compress-Archive -Path (Join-Path $portableRoot '*') -DestinationPath (Join-Path $env:GITHUB_WORKSPACE 'portable/options-relay-windows-moomoo.zip') -Force
+
+      - name: Upload Moomoo portable app
+        uses: actions/upload-artifact@v4
+        with:
+          name: options-relay-windows-moomoo
+          if-no-files-found: error
+          path: portable/options-relay-windows-moomoo.zip
+
   release:
     name: Draft GitHub Release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs:
+      - build
+      - build_moomoo_windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -116,12 +205,15 @@ jobs:
           generate_release_notes: true
           files: |
             release-artifacts/options-relay-windows.exe
+            release-artifacts/options-relay-windows-moomoo.zip
             release-artifacts/options-relay-macos
 
   nightly_release:
     name: Publish Nightly Release
     if: github.event_name == 'schedule' || ((github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'))
-    needs: build
+    needs:
+      - build
+      - build_moomoo_windows
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -152,6 +244,7 @@ jobs:
 
           files=(
             release-artifacts/options-relay-windows.exe
+            release-artifacts/options-relay-windows-moomoo.zip
             release-artifacts/options-relay-macos
           )
 

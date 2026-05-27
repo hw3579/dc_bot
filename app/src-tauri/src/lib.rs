@@ -5,13 +5,13 @@ mod runtime_env;
 use std::sync::Arc;
 use std::time::Duration as StdDuration;
 
-use broker::{relay_signal, BrokerConfig};
+use broker::{relay_signal, BrokerConfig, BrokerKind};
 use futures_util::StreamExt;
 use relay::{
     build_snapshot, current_broker_config, current_nats_config,
     normalize_nats_server_address, persist_runtime_snapshot, queue_signal,
     signal_from_nats_payload, update_message, validate_signal, AppState, NatsFeedConfig,
-    OptionSignalInput, RelayMessage, RelayReceipt,
+    IbGatewayConfig, OptionSignalInput, RelayMessage, RelayReceipt,
     RuntimeSnapshot, SNAPSHOT_EVENT,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
@@ -44,9 +44,28 @@ fn save_broker_config(
 fn save_ib_gateway_config(
     app: AppHandle,
     state: State<AppState>,
-    config: BrokerConfig,
+    config: IbGatewayConfig,
 ) -> Result<RuntimeSnapshot, String> {
-    save_broker_config(app, state, config)
+    config.validate()?;
+
+    {
+        let mut stored_config = state
+            .config
+            .lock()
+            .map_err(|_| String::from("无法更新 broker 配置"))?;
+
+        stored_config.broker = BrokerKind::Ibkr;
+        stored_config.host = config.host;
+        stored_config.port = config.port;
+        stored_config.client_id = config.client_id;
+        stored_config.account = config.account;
+        stored_config.default_exchange = config.default_exchange;
+        stored_config.currency = config.currency;
+        stored_config.dry_run = config.dry_run;
+        stored_config.auto_forward = config.auto_forward;
+    }
+
+    emit_snapshot(&app)
 }
 
 #[tauri::command]

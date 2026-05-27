@@ -1,9 +1,13 @@
 mod ib;
+#[cfg(feature = "moomoo-python")]
 mod moomoo;
+
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
 use crate::relay::{OptionSignalInput, RelayReceipt};
+use crate::runtime_env::{env_string, load_dotenv};
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -62,28 +66,67 @@ pub struct BrokerConfig {
 
 impl Default for BrokerConfig {
     fn default() -> Self {
+        load_dotenv();
+
         Self {
-            broker: BrokerKind::Ibkr,
-            default_quantity: 1.0,
-            host: String::from("127.0.0.1"),
-            port: 4002,
-            client_id: 100,
-            account: String::new(),
-            default_exchange: String::from("SMART"),
-            currency: String::from("USD"),
-            moomoo_host: String::from("127.0.0.1"),
-            moomoo_port: 11111,
-            moomoo_market: String::from("US"),
-            moomoo_trd_env: String::from("SIMULATE"),
-            moomoo_acc_id: 0,
-            moomoo_security_firm: String::from("FUTUSECURITIES"),
-            moomoo_time_in_force: String::from("DAY"),
-            moomoo_session: String::from("NONE"),
-            moomoo_fill_outside_rth: false,
-            dry_run: true,
-            auto_forward: true,
+            broker: env_broker_kind().unwrap_or(BrokerKind::Ibkr),
+            default_quantity: env_parse("OPTIONS_RELAY_DEFAULT_QUANTITY").unwrap_or(1.0),
+            host: env_string("IB_GATEWAY_HOST").unwrap_or_else(|| String::from("127.0.0.1")),
+            port: env_parse("IB_GATEWAY_PORT").unwrap_or(4002),
+            client_id: env_parse("IB_GATEWAY_CLIENT_ID").unwrap_or(100),
+            account: env_string("IB_GATEWAY_ACCOUNT").unwrap_or_default(),
+            default_exchange: env_string("IB_GATEWAY_DEFAULT_EXCHANGE")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("SMART")),
+            currency: env_string("IB_GATEWAY_CURRENCY")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("USD")),
+            moomoo_host: env_string("MOOMOO_HOST").unwrap_or_else(|| String::from("127.0.0.1")),
+            moomoo_port: env_parse("MOOMOO_PORT").unwrap_or(11111),
+            moomoo_market: env_string("MOOMOO_MARKET")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("US")),
+            moomoo_trd_env: env_string("MOOMOO_TRD_ENV")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("SIMULATE")),
+            moomoo_acc_id: env_parse("MOOMOO_ACC_ID").unwrap_or(0),
+            moomoo_security_firm: env_string("MOOMOO_SECURITY_FIRM")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("FUTUSECURITIES")),
+            moomoo_time_in_force: env_string("MOOMOO_TIME_IN_FORCE")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("DAY")),
+            moomoo_session: env_string("MOOMOO_SESSION")
+                .map(|value| value.to_uppercase())
+                .unwrap_or_else(|| String::from("NONE")),
+            moomoo_fill_outside_rth: env_bool("MOOMOO_FILL_OUTSIDE_RTH").unwrap_or(false),
+            dry_run: env_bool("IB_GATEWAY_DRY_RUN").unwrap_or(true),
+            auto_forward: env_bool("IB_GATEWAY_AUTO_FORWARD").unwrap_or(true),
         }
     }
+}
+
+fn env_parse<T>(key: &str) -> Option<T>
+where
+    T: FromStr,
+{
+    env_string(key).and_then(|value| value.parse::<T>().ok())
+}
+
+fn env_bool(key: &str) -> Option<bool> {
+    env_string(key).and_then(|value| match value.to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    })
+}
+
+fn env_broker_kind() -> Option<BrokerKind> {
+    env_string("OPTIONS_RELAY_BROKER").and_then(|value| match value.to_ascii_lowercase().as_str() {
+        "ib" | "ibkr" => Some(BrokerKind::Ibkr),
+        "futu" | "moomoo" => Some(BrokerKind::Moomoo),
+        _ => None,
+    })
 }
 
 impl BrokerConfig {
@@ -149,8 +192,26 @@ pub async fn relay_signal(
 
     match config.broker {
         BrokerKind::Ibkr => ib::relay(signal, config).await,
-        BrokerKind::Moomoo => moomoo::relay(signal, config).await,
+        BrokerKind::Moomoo => relay_moomoo_signal(signal, config).await,
     }
+}
+
+#[cfg(feature = "moomoo-python")]
+async fn relay_moomoo_signal(
+    signal: &OptionSignalInput,
+    config: &BrokerConfig,
+) -> Result<RelayReceipt, String> {
+    moomoo::relay(signal, config).await
+}
+
+#[cfg(not(feature = "moomoo-python"))]
+async fn relay_moomoo_signal(
+    _signal: &OptionSignalInput,
+    _config: &BrokerConfig,
+) -> Result<RelayReceipt, String> {
+    Err(String::from(
+        "当前构建未启用 Moomoo Python bridge，请使用带 moomoo-python feature 的构建版本",
+    ))
 }
 
 fn validate_ib_config(config: &BrokerConfig) -> Result<(), String> {
@@ -166,6 +227,17 @@ fn validate_ib_config(config: &BrokerConfig) -> Result<(), String> {
 }
 
 fn validate_moomoo_config(config: &BrokerConfig) -> Result<(), String> {
+    #[cfg(not(feature = "moomoo-python"))]
+    {
+        let _ = config;
+
+        return Err(String::from(
+            "当前构建未启用 Moomoo Python bridge，请使用带 moomoo-python feature 的构建版本",
+        ));
+    }
+
+    #[cfg(feature = "moomoo-python")]
+    {
     if config.moomoo_host.trim().is_empty() {
         return Err(String::from("Moomoo OpenD host 不能为空"));
     }
@@ -196,4 +268,5 @@ fn validate_moomoo_config(config: &BrokerConfig) -> Result<(), String> {
     }
 
     Ok(())
+    }
 }
